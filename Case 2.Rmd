@@ -1,0 +1,231 @@
+---
+title: "Team Case 2 : Undercutting Based on Analytics- All State Cost"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+##DATA CLEANING 
+
+#######################################################
+### Undercutting ALLSTATE online Case
+###
+###
+### Load additional file to install packages- Please chose the DataAnlyticsFunction.R file
+source(file.choose())
+###
+###
+### Load ALLSTATE DATA FILE - Please load the ALLSTATE csv file
+ALLcost <- read.csv(file.choose())
+
+###
+###
+### Data Preparation ###########################
+################################################
+###
+### Lets see a summary of it
+###
+summary(ALLcost)
+### there are plenty of things to decide here.
+### Which variables have NA's:
+### risk_factor also has NA (that should be also a level)
+### duration_previous it has 0 and NA's we probably need to treat them differently.
+### C_previous
+### location
+### 
+### Lets print the first 6 data points
+ALLcost[1:6,]
+### we see that the first customer requested 2 quotes
+### if we are predicting the behavior of the customer, we should take that in consideration
+### but first we will predict the cost quoted by ALLSTATE
+### so we start by assuming it does not discriminate across used id and shopping_pt (an assumption)
+drop <- c("customer_ID","shopping_pt","record_type","time","location")
+### This creates a dataframe (DATA) from d without the columns in drops
+DATA <- ALLcost[,!(names(ALLcost) %in% drop)]
+###
+DATA$car_value <-  factor(DATA$car_value)
+DATA$day <-  factor(DATA$day)
+DATA$state <-  factor(DATA$state)
+duration_NA <-  ifelse( is.na(DATA$duration_previous) , 1, 0 )        ### creating a dummy variable for NA
+### number of NA in duration
+sum(duration_NA)
+### corresponds to 5% of the sample 783/15483
+sum(duration_NA)/length(duration_NA)
+### It is not that big and we could just drop them in a first analysis
+### however we wil create a dummy variable
+DATA$duration_previous[duration_NA>0] <-0 ### making NA to zero
+### lets look at C_previous
+C_NA <-  ifelse( is.na(DATA$C_previous), 1, 0 )        ### creating a dummy variable for NA
+### how many?
+sum(C_NA)
+### very suspecious...
+cor(C_NA,duration_NA)
+### HAHA... the same observations that do not report previous duration...
+### Lets treat C_previous as factor
+DATA$C_previous[C_NA>0] <-0 ### making NA to zero
+DATA$C_previous <-  factor(DATA$C_previous)                           
+### Lets look at risk_factor as well...
+risk_NA <- ifelse( is.na(DATA$risk_factor), 1, 0 )
+sum(risk_NA)
+### The NA for those are different observations...
+DATA$risk_factor[risk_NA>0] <-0                     
+### treat thatas a level "0" (a new category of risk...)
+DATA$risk_factor <-  factor(DATA$risk_factor)                           
+###
+DATA$homeowner <-  factor(DATA$homeowner)
+DATA$married_couple <-  factor(DATA$married_couple)
+summary(DATA)
+### there should be no NA's in the data at this point....
+```
+
+
+```{r}
+#################################
+#### Question 1: Visualization
+#################################
+
+##Plotting age of Oldest Person in the Policy VS Mean Cost of Quote
+
+a = c()
+a_levels = c(18:75)
+
+for (x in 18:75) {
+  a = rbind(a,mean(DATA$cost[DATA$age_oldest==x]))
+  print(mean(DATA$cost[DATA$age_oldest == x], na.rm = TRUE))
+}
+
+##Please refer to the inference of this plot in the pdf
+
+##Plotting age of Youngest Person in the Policy VS Mean Cost of Quote
+
+library("ggplot2")
+plot(a_levels,a,col="cornflowerblue", pch =16, main="The Mean Quote Prices vs Age of the Oldest Person on the Policy", xlab = "Age of the Oldest Person in the group on the Insurance Policy", ylab="Mean Cost per Age")
+abline(lm(a~a_levels), col = "navyblue")
+
+b = c()
+b_levels = c(18:75)
+
+for (x in 18:75) {
+  b = rbind(b,mean(DATA$cost[DATA$age_youngest==x]))
+  print(mean(DATA$cost[DATA$age_youngest == x], na.rm = TRUE))
+}
+
+library("ggplot2")
+plot(b_levels,b,col="purple", pch =16, main="The Mean Quote Prices vs Age of the Youngest Person on the Policy", xlab = "Age of the Youngest Person in the group on the Insurance Policy", ylab="Mean Cost per Age")
+abline(lm(b~b_levels), col = "navyblue")
+
+##Please refer to the inference of this plot in the pdf
+
+```
+
+
+```{r}
+#### Question 2: A first linear Regression Model. 
+####             Feel free to use this or improve upon it.
+#### this is a linear regression with all the variables in DATA
+result <- glm(cost ~ ., data = DATA) 
+### and to see the results (coefficients, p-values, etc...)
+summary(result)
+### the R-squared in this case is 
+1 - (result$dev/result$null)
+
+### As a side note, note that when running regressions, 
+### sometimes R creates new columns automatically to run the regression
+### for example, it creates dummies for you if you have columns that are
+### factors. To get matrix with all these columns explicitly created 
+### for the following regression
+result <- glm(cost ~ ., data = DATA)
+### simply use the command "model.matrix" as follows
+M <- model.matrix(cost~., data = DATA)
+summary(M)
+### thus the same regression can be run as
+resultM <- glm(DATA$cost ~ M)
+### Just to make sure, lets see that R2 match...
+1 - (resultM$dev/resultM$null)
+###
+### By having the design matrix you can easily drop or add variables
+### based on any rule you like to use.
+### For example, if you want to use only the first 5 columns of M
+### you simple call with M[,1:5]
+resultM5 <- glm(DATA$cost ~ M[,1:5])
+
+#### Another model one can consider is the one that 
+#### would include interactions based 
+#### on the the coverage options A through G
+#### we can add those interactions in addition to the previous variables
+result_interactions <- glm(cost ~ .+(A+B+C+D+E+F+G)^2, data = DATA) 
+#### this has all the variables plus all the interations 
+
+summary(result_interactions)
+
+##Dropping the variables that are not significant and choosing the model for our regression
+
+my_model2<- glm(cost~ homeowner + car_age + car_value+ risk_factor+ age_oldest+ age_youngest + married_couple + C_previous + duration_previous +(A+B+C+D+E+F+G)^2, data = DATA)
+summary(my_model2)
+
+##Predictions done below
+
+```
+
+
+```{r}
+#################################
+#### Questions 3 is conceptual questions about modeling framework.
+#### No data analysis expected.
+## We have used the following code to make our forecasts 
+forecast<- predict(my_model2, newdata=DATA, interval="prediction")
+comparison<-data.frame(DATA$cost,forecast3)
+
+##Writing all the values into an excel file.
+library(writexl)
+##Please provide a path where the excel can be saved. 
+write_xlsx(comparison,"/Users/riddhimab/Downloads/Data Science/comparison_new.xlsx")
+
+##We have attached our own excel sheet with further calculations on canvas.
+
+```
+
+
+```{r}
+#################################
+
+#################################
+### Question 4 Provide quotes for new.customers
+#################################
+
+## The following command loads the "new.customers" to memory
+## it is already formatted in our conventions 
+## (where NA's in some variables were turned to level "0")
+new.customers <- readRDS("NewCustomers.Rda")
+
+print("Competitiors Prediction")
+predict (result, newdata = new.customers)
+
+print("Our Prediction")
+
+##Using the model of the team to predict the quote costs for the "new customers"
+predict(my_model2, newdata= new.customers)
+
+```
+
+```{r}
+#################################
+#### Question 5: No start script
+## We want to determine the effect that the "risk_factor" variable has on the cost. 
+## Hence we have plotted the two as a boxplot
+plot(DATA$risk_factor,DATA$cost, col="cornflowerblue", pch =16, 
+     main="Cost Distribution of Different Risk Factors", xlab = "Risk Factors", ylab="Cost")
+
+## We see that the boxplot shows no relation betweeen the quote price to the customer with the risk level. Hence, we have assumed that since this is a significant variable, it affects the customers cost to company/ liklihood of them claiming their insurance.
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
